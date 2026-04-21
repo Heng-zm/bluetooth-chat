@@ -17,18 +17,21 @@ jobs:
           - platform: windows
             os: windows-latest
             output: build/windows/x64/runner/Release
+            archive: bluetooth_chat_windows.zip
           - platform: macos
             os: macos-latest
             output: build/macos/Build/Products/Release
+            archive: bluetooth_chat_macos.zip
           - platform: linux
             os: ubuntu-latest
             output: build/linux/x64/release/bundle
+            archive: bluetooth_chat_linux.tar.gz
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # --- Linux Dependencies ---
+      # --- Linux Native Dependencies ---
       - name: Install Linux Dependencies
         if: matrix.platform == 'linux'
         run: |
@@ -51,24 +54,39 @@ jobs:
         run: flutter pub get
 
       - name: Ensure Platform Folders Exist
-        # This creates the windows/macos/linux folders if they are missing in the repo
+        # This prevents the "No Windows project configured" error
         run: flutter create --platforms=windows,macos,linux .
 
       - name: Build Desktop App
         run: flutter build ${{ matrix.platform }} --release
 
-      - name: Upload Artifacts
+      # --- Packaging Logic (Fixes the flutter_windows.dll error) ---
+      
+      - name: Package Windows Build
+        if: matrix.platform == 'windows'
+        run: Compress-Archive -Path ${{ matrix.output }}/* -DestinationPath ${{ matrix.archive }}
+
+      - name: Package macOS Build
+        if: matrix.platform == 'macos'
+        run: ditto -c -k --sequesterRsrc --keepParent ${{ matrix.output }}/*.app ${{ matrix.archive }}
+
+      - name: Package Linux Build
+        if: matrix.platform == 'linux'
+        run: tar -czvf ${{ matrix.archive }} -C ${{ matrix.output }} .
+
+      # --- Artifact & Release Management ---
+
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}-build
-          path: ${{ matrix.output }}
+          path: ${{ matrix.archive }}
 
       - name: Release to GitHub
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ matrix.output }}/*
-          file_glob: true
+          file: ${{ matrix.archive }}
           tag: v1.0.${{ github.run_number }}
           overwrite: true
-          body: "Automated Desktop Build (Run #${{ github.run_number }})"
+          body: "Bluetooth Chat Desktop - Automated Release (Run #${{ github.run_number }})"
