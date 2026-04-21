@@ -16,27 +16,24 @@ jobs:
         include:
           - platform: windows
             os: windows-latest
-            output: build/windows/x64/runner/Release/*.exe
+            output: build/windows/x64/runner/Release
           - platform: macos
             os: macos-latest
-            output: build/macos/Build/Products/Release/*.app
+            output: build/macos/Build/Products/Release
           - platform: linux
             os: ubuntu-latest
-            output: build/linux/x64/release/bundle/*
+            output: build/linux/x64/release/bundle
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # --- Platform Specific Dependencies ---
-      
+      # --- Linux Dependencies ---
       - name: Install Linux Dependencies
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
-
-      # --- Core Flutter Setup ---
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -44,21 +41,21 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Install Dependencies
-        run: flutter pub get
-
       - name: Enable Desktop Support
         run: |
           flutter config --enable-linux-desktop
           flutter config --enable-macos-desktop
           flutter config --enable-windows-desktop
 
-      # --- Build Process ---
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Ensure Platform Folders Exist
+        # This creates the windows/macos/linux folders if they are missing in the repo
+        run: flutter create --platforms=windows,macos,linux .
 
       - name: Build Desktop App
         run: flutter build ${{ matrix.platform }} --release
-
-      # --- Packaging & Artifacts ---
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -70,8 +67,8 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ matrix.output }}
+          file: ${{ matrix.output }}/*
           file_glob: true
           tag: v1.0.${{ github.run_number }}
           overwrite: true
-          body: "Automated Desktop Build for Bluetooth Chat (Run #${{ github.run_number }})"
+          body: "Automated Desktop Build (Run #${{ github.run_number }})"
