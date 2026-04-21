@@ -1,0 +1,60 @@
+name: Android-build
+
+on:
+  workflow_dispatch: # Allows manual triggering
+  push:
+    branches:
+      - main # Optional: triggers on every push to main
+
+jobs:
+  build-android:
+    name: 🤖 Android Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu' # Highly stable OpenJDK distribution
+          java-version: '17'
+          cache: 'gradle' # Caches Gradle dependencies automatically
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      # Optional: Add a step for linting or testing
+      # - name: Run Analysis
+      #   run: flutter analyze
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Build App Bundle (AAB)
+        run: flutter build appbundle --release
+
+      - name: Upload APK to Release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: build/app/outputs/flutter-apk/app-release.apk
+          asset_name: app-release-v${{ github.run_number }}.apk
+          tag: "v${{ github.run_number }}"
+          overwrite: true
+          body: "Android build for run ${{ github.run_number }}"
+
+      - name: Upload App Bundle to Release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: build/app/outputs/bundle/release/app-release.aab
+          asset_name: app-release-v${{ github.run_number }}.aab
+          tag: "v${{ github.run_number }}"
+          overwrite: true
