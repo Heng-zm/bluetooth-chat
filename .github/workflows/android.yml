@@ -30,17 +30,25 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Create missing assets directory
+      - name: Ensure Assets Directory Exists
+        # This fixes the "unable to find directory entry in pubspec.yaml" error
         run: mkdir -p assets
 
       - name: Build APK
-        run: flutter build apk --release --android-skip-build-dependency-validation
+        # Added --no-tree-shake-icons to avoid that warning/extra processing
+        run: flutter build apk --release --no-tree-shake-icons --android-skip-build-dependency-validation
 
-      - name: Upload APK to Release
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Create Release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: build/app/outputs/flutter-apk/app-release.apk
-          asset_name: BluetoothChat-Build-${{ github.run_number }}.apk
+          asset_name: BluetoothChat-${{ github.run_number }}.apk
           tag: v1.0.${{ github.run_number }}
           overwrite: true
