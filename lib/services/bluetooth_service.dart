@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:io'; 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
+
+// Project-specific imports - ensure these paths match your folder structure
 import 'encryption_service.dart';
 import '../models/message_model.dart';
 import '../models/device_model.dart';
@@ -19,21 +22,23 @@ class BluetoothService extends ChangeNotifier {
   final EncryptionService _encryption;
   BluetoothConnection? _connection;
   StreamSubscription? _inputSubscription;
+  StreamSubscription? _discoverySubscription;
+  
   String _buffer = '';
-
   BluetoothConnectionState _state = BluetoothConnectionState.disconnected;
+  
   List<BTDevice> _pairedDevices = [];
   List<BTDevice> _discoveredDevices = [];
   List<Message> _messages = [];
+  
   String? _connectedDeviceName;
   String? _errorMessage;
   bool _isDiscovering = false;
-  StreamSubscription? _discoverySubscription;
 
   BluetoothService({EncryptionService? encryption})
       : _encryption = encryption ?? EncryptionService();
 
-  // Getters
+  // --- Getters ---
   BluetoothConnectionState get state => _state;
   List<BTDevice> get pairedDevices => _pairedDevices;
   List<BTDevice> get discoveredDevices => _discoveredDevices;
@@ -44,11 +49,15 @@ class BluetoothService extends ChangeNotifier {
   bool get isConnected => _state == BluetoothConnectionState.connected;
   EncryptionService get encryptionService => _encryption;
 
-  /// Initialize Bluetooth and load paired devices
+  /// Initialize Bluetooth and check permissions
   Future<void> initialize() async {
+    if (!Platform.isAndroid) {
+      debugPrint("Bluetooth Service: Non-Android platform detected. Native calls disabled.");
+      return;
+    }
+
     try {
-      final isEnabled =
-          await FlutterBluetoothSerial.instance.isEnabled ?? false;
+      final isEnabled = await FlutterBluetoothSerial.instance.isEnabled ?? false;
       if (!isEnabled) {
         await FlutterBluetoothSerial.instance.requestEnable();
       }
@@ -58,33 +67,33 @@ class BluetoothService extends ChangeNotifier {
     }
   }
 
-  /// Load already paired devices
+  /// Load already paired (bonded) devices from the OS
   Future<void> loadPairedDevices() async {
+    if (!Platform.isAndroid) return;
+
     try {
       final bonded = await FlutterBluetoothSerial.instance.getBondedDevices();
-      _pairedDevices = bonded
-          .map((d) => BTDevice(
-                name: d.name ?? 'Unknown',
-                address: d.address,
-                type: _deviceTypeFromBT(d.type),
-                isPaired: true,
-              ))
-          .toList();
+      _pairedDevices = bonded.map((d) => BTDevice(
+        name: d.name ?? 'Unknown Device',
+        address: d.address,
+        type: _deviceTypeFromBT(d.type),
+        isPaired: true,
+      )).toList();
       notifyListeners();
     } catch (e) {
       _setError('Could not load paired devices: $e');
     }
   }
 
-  /// Start discovering nearby Bluetooth devices
+  /// Scan for new nearby devices
   Future<void> startDiscovery() async {
-    if (_isDiscovering) return;
+    if (!Platform.isAndroid || _isDiscovering) return;
+
     _discoveredDevices.clear();
     _isDiscovering = true;
-    notifyListeners();
+    _setState(BluetoothConnectionState.scanning);
 
-    _discoverySubscription =
-        FlutterBluetoothSerial.instance.startDiscovery().listen(
+    _discoverySubscription = FlutterBluetoothSerial.instance.startDiscovery().listen(
       (result) {
         final device = BTDevice(
           name: result.device.name ?? 'Unknown',
@@ -94,8 +103,7 @@ class BluetoothService extends ChangeNotifier {
           isPaired: result.device.isBonded,
         );
 
-        final idx =
-            _discoveredDevices.indexWhere((d) => d.address == device.address);
+        final idx = _discoveredDevices.indexWhere((d) => d.address == device.address);
         if (idx >= 0) {
           _discoveredDevices[idx] = device;
         } else {
@@ -105,7 +113,9 @@ class BluetoothService extends ChangeNotifier {
       },
       onDone: () {
         _isDiscovering = false;
-        notifyListeners();
+        if (_state == BluetoothConnectionState.scanning) {
+          _setState(BluetoothConnectionState.disconnected);
+        }
       },
       onError: (e) {
         _isDiscovering = false;
@@ -114,16 +124,22 @@ class BluetoothService extends ChangeNotifier {
     );
   }
 
-  /// Stop device discovery
+  /// Stop the current discovery process
   Future<void> stopDiscovery() async {
+    if (!Platform.isAndroid) return;
     await _discoverySubscription?.cancel();
     await FlutterBluetoothSerial.instance.cancelDiscovery();
     _isDiscovering = false;
     notifyListeners();
   }
 
-  /// Connect to a device
+  /// Connect to a specific device via MAC address
   Future<void> connectToDevice(BTDevice device) async {
+    if (!Platform.isAndroid) {
+      _setError("Bluetooth Serial is only supported on Android.");
+      return;
+    }
+    
     if (_state == BluetoothConnectionState.connecting) return;
 
     _setState(BluetoothConnectionState.connecting);
@@ -134,11 +150,10 @@ class BluetoothService extends ChangeNotifier {
       _connectedDeviceName = device.name;
       _setState(BluetoothConnectionState.connected);
 
-      // Listen for incoming data
       _inputSubscription = _connection!.input!.listen(
         _onDataReceived,
         onDone: () => disconnect(),
-        onError: (e) => _setError('Connection error: $e'),
+        onError: (e) => _setError('Connection lost: $e'),
         cancelOnError: false,
       );
     } catch (e) {
@@ -147,7 +162,7 @@ class BluetoothService extends ChangeNotifier {
     }
   }
 
-  /// Disconnect from current device
+  /// Disconnect and clean up streams
   Future<void> disconnect() async {
     await _inputSubscription?.cancel();
     await _connection?.close();
@@ -156,13 +171,15 @@ class BluetoothService extends ChangeNotifier {
     _setState(BluetoothConnectionState.disconnected);
   }
 
-  /// Send an encrypted message
+  /// Encrypt and send a message packet
   Future<void> sendMessage(String text) async {
     if (!isConnected || text.trim().isEmpty) return;
 
     try {
       final encrypted = _encryption.encrypt(text.trim());
+      // Packet Framing: Encode as JSON and add a newline character
       final packet = jsonEncode({'t': encrypted, 'v': '1'}) + '\n';
+      
       _connection!.output.add(Uint8List.fromList(utf8.encode(packet)));
       await _connection!.output.allSent;
 
@@ -173,6 +190,7 @@ class BluetoothService extends ChangeNotifier {
         isMine: true,
         timestamp: DateTime.now(),
       );
+      
       _messages.add(message);
       notifyListeners();
     } catch (e) {
@@ -180,7 +198,7 @@ class BluetoothService extends ChangeNotifier {
     }
   }
 
-  /// Handle incoming data bytes
+  /// Handles stream fragmentation using a newline-terminated buffer
   void _onDataReceived(Uint8List data) {
     _buffer += utf8.decode(data, allowMalformed: true);
 
@@ -196,32 +214,27 @@ class BluetoothService extends ChangeNotifier {
         final encryptedText = json['t'] as String? ?? '';
         final decryptedText = _encryption.decrypt(encryptedText);
 
-        final message = Message(
+        _messages.add(Message(
           id: DateTime.now().millisecondsSinceEpoch.toString(),
           text: decryptedText,
           encryptedText: encryptedText,
           isMine: false,
           timestamp: DateTime.now(),
-        );
-        _messages.add(message);
-        notifyListeners();
+        ));
       } catch (e) {
-        // Possibly a non-encrypted message or malformed packet
-        final message = Message(
+        _messages.add(Message(
           id: DateTime.now().millisecondsSinceEpoch.toString(),
-          text: '[Could not decrypt message]',
+          text: '[Decryption Error or Malformed Packet]',
           encryptedText: line,
           isMine: false,
           timestamp: DateTime.now(),
           isDecryptionError: true,
-        );
-        _messages.add(message);
-        notifyListeners();
+        ));
       }
+      notifyListeners();
     }
   }
 
-  /// Update the encryption passphrase
   void updatePassphrase(String passphrase) {
     _encryption.updatePassphrase(passphrase);
     notifyListeners();
@@ -241,14 +254,10 @@ class BluetoothService extends ChangeNotifier {
 
   String _deviceTypeFromBT(BluetoothDeviceType type) {
     switch (type) {
-      case BluetoothDeviceType.classic:
-        return 'Classic';
-      case BluetoothDeviceType.le:
-        return 'BLE';
-      case BluetoothDeviceType.dual:
-        return 'Dual';
-      default:
-        return 'Unknown';
+      case BluetoothDeviceType.classic: return 'Classic';
+      case BluetoothDeviceType.le:      return 'BLE';
+      case BluetoothDeviceType.dual:    return 'Dual';
+      default:                          return 'Unknown';
     }
   }
 
@@ -264,7 +273,7 @@ class BluetoothService extends ChangeNotifier {
   void dispose() {
     _inputSubscription?.cancel();
     _discoverySubscription?.cancel();
-    _connection?.close();
+    _connection?.dispose();
     super.dispose();
   }
 }
