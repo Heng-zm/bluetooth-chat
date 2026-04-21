@@ -5,7 +5,7 @@ pluginManagement {
         if (propertiesFile.exists()) {
             propertiesFile.inputStream().use { properties.load(it) }
         }
-        // Check local.properties first, then fallback to environment variable (for CI)
+        // Fallback to environment variable for GitHub Actions
         properties.getProperty("flutter.sdk") ?: System.getenv("FLUTTER_ROOT")
     }
 
