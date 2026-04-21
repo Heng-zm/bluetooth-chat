@@ -13,16 +13,17 @@ subprojects {
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
 
-// FIX: Inject namespace into old plugins like flutter_bluetooth_serial
+// Fix for older plugins like flutter_bluetooth_serial
 subprojects {
     afterEvaluate {
-        if (plugins.hasPlugin("com.android.library") || plugins.hasPlugin("com.android.application")) {
+        if (plugins.hasPlugin("com.android.library")) {
             val android = extensions.findByName("android") as? com.android.build.gradle.BaseExtension
-            if (android != null && android.namespace == null) {
-                android.namespace = if (project.name == "flutter_bluetooth_serial") {
+            if (android != null && (android.namespace == null || android.namespace!!.isEmpty())) {
+                val name = project.name.replace("-", "_")
+                android.namespace = if (name == "flutter_bluetooth_serial") {
                     "io.github.edufolly.flutter_bluetooth_serial"
                 } else {
-                    "com.example.${project.name.replace("-", "_")}"
+                    "com.example.$name"
                 }
             }
         }
