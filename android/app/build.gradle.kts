@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.bluetothchat"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 34 // Explicitly set to a modern stable SDK
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -20,8 +20,8 @@ android {
 
     defaultConfig {
         applicationId = "com.example.bluetothchat"
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        minSdk = 21
+        targetSdk = 34
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
@@ -29,10 +29,16 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("debug")
+            minifyEnabled = false
+            shrinkResources = false
         }
     }
 }
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // The Flutter plugin automatically adds the flutter.jar and engine dependencies
 }
