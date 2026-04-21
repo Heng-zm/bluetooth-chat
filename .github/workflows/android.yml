@@ -1,10 +1,9 @@
-name: Android-Production-Build
+name: Android-Build-Workflow
 
 on:
-  workflow_dispatch: # Allows you to run this manually from the Actions tab
+  workflow_dispatch:
   push:
-    branches:
-      - main # Automatically builds when you push to main
+    branches: [ main ]
 
 jobs:
   build:
@@ -19,7 +18,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17' # Required for AGP 8.0+
+          java-version: '17'
           cache: 'gradle'
 
       - name: Setup Flutter
@@ -31,28 +30,17 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+      - name: Create missing assets directory
+        run: mkdir -p assets
+
       - name: Build APK
-        # We keep the skip-validation flag just in case Kotlin isn't upgraded yet
         run: flutter build apk --release --android-skip-build-dependency-validation
 
-      - name: Build App Bundle (AAB)
-        run: flutter build appbundle --release --android-skip-build-dependency-validation
-
-      - name: Create GitHub Release
+      - name: Upload APK to Release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: build/app/outputs/flutter-apk/app-release.apk
-          asset_name: BluetoothChat-v${{ github.run_number }}.apk
-          tag: v1.0.${{ github.run_number }}
-          overwrite: true
-          body: "Automated Build for Bluetooth Chat App (Run #${{ github.run_number }})"
-
-      - name: Upload AAB to Release
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: build/app/outputs/bundle/release/app-release.aab
-          asset_name: BluetoothChat-v${{ github.run_number }}.aab
+          asset_name: BluetoothChat-Build-${{ github.run_number }}.apk
           tag: v1.0.${{ github.run_number }}
           overwrite: true
